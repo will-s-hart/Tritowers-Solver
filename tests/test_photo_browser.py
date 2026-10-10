@@ -198,18 +198,23 @@ def test_stale_grid_response_cannot_change_new_photo_mode_or_stock_edit(server, 
     page = open_page(browser, server)
     requests = []
     page.route('**/api/photo', lambda route: requests.append(route))
-    page.set_input_files('#photo', photo()); page.wait_for_timeout(200)
-    page.set_input_files('#photo', photo()); page.wait_for_timeout(200)
+    def choose(count):
+        # Wait for the request itself; a slow runner may take longer than a fixed pause to encode.
+        page.set_input_files('#photo', photo())
+        for _ in range(200):
+            if len(requests) >= count: break
+            page.wait_for_timeout(50)
+    choose(1); choose(2)
     assert len(requests) == 2
     requests[1].fulfill(json=draft('2'))
     page.wait_for_function("document.querySelector('#startBtn').textContent.includes('Confirm')")
     requests[0].fulfill(json=full_deal_draft()); page.wait_for_timeout(100)
     assert page.is_visible('#startBtn') and page.is_hidden('#solveBtn')
     assert page.locator('#soChips .chip').count() == 0
-    page.set_input_files('#photo', photo()); page.wait_for_timeout(200)
+    choose(3)
     requests[2].fulfill(json=full_deal_draft())
     page.wait_for_selector('#solveBtn:not([hidden])')
-    page.set_input_files('#photo', photo()); page.wait_for_timeout(200)
+    choose(4)
     page.click('#soChips [data-i="0"]'); page.click('#keys [data-k="?"]')
     requests[3].fulfill(json=draft()); page.wait_for_timeout(100)
     assert page.is_visible('#solveBtn') and page.is_hidden('#startBtn')
