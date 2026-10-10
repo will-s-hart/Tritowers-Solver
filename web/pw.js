@@ -17,6 +17,8 @@ const ready=(async()=>{
   loadVision();
 })();
 let queue=Promise.resolve(),latestPhoto=null;
+// Once idle, build the font caches the first photo read would otherwise pay for.
+queue=queue.then(async()=>{try{await ready;await loadVision();py.runPython('w.warm_vision()')}catch(e){}});
 const waiting=new Set(),cancelled=new Set();
 self.onmessage=({data})=>{
   if(data.cancel!==undefined){if(waiting.has(data.cancel))cancelled.add(data.cancel);return}

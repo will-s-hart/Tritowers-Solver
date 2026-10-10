@@ -170,7 +170,7 @@ def test_overlapped_ten_with_open_zero_is_not_read_as_a_king():
            'objects': {0: np.array([left, top, mask.width, 44])}}
     intact = Image.new('RGB', (240, 180), FACE)
     intact.paste((20, 20, 20), (left, top), mask)
-    glyph, _, valid = _extract(np.asarray(intact), row, 0, shear=0)
+    glyph, _, valid, _ = _extract(np.asarray(intact), row, 0, shear=0)
     assert valid and glyph is not None
     # The next overlapping face conceals the zero's closing stroke. Both
     # remaining tall components are visible, but this is not a printed K.
@@ -178,32 +178,77 @@ def test_overlapped_ten_with_open_zero_is_not_read_as_a_king():
     damaged = intact.copy()
     ImageDraw.Draw(damaged).rectangle((left + cut, top, 239, top + 44), fill=FACE)
     row['objects'][0] = np.array([left, top, cut, 44])
-    glyph, _, valid = _extract(np.asarray(damaged), row, 0, shear=0)
+    glyph, _, valid, _ = _extract(np.asarray(damaged), row, 0, shear=0)
     assert glyph is None and not valid
 
 
-@pytest.mark.parametrize('diagonal_contrast', [.30, .35])
-def test_faded_four_diagonal_is_reviewed_instead_of_named_as_another_rank(diagonal_contrast):
+def _read_crop(rgb, row):
+    """One crop read as read_full_deal reads it: font tier, then the ink veto."""
     from tritowers_vision import glyphs
-    from tritowers_vision.full_deal import _extract
-    mask = _rank_image('4')
+    from tritowers_vision.full_deal import _contradicted, _extract
+    glyph, _, valid, detail = _extract(rgb, row, 0, shear=0)
+    if glyph is None:
+        return None
+    rank = glyphs.match(glyph, counters=detail['counters'])[0]
+    return None if rank and _contradicted(rank, detail) else rank
+
+
+def _faded(rank, region, contrast):
+    mask = _rank_image(rank)
     width, height = mask.size
     left, top = 80, 60
-    center = left + width / 2
-    row = {'x': np.array([center, center + 100]), 'y': np.array([82, 82]),
+    row = {'x': np.array([left + width / 2, left + width / 2 + 100]), 'y': np.array([82, 82]),
            'h': np.array([44, 44]), 'fit': np.array([0, 82]),
            'objects': {0: np.array([left, top, width, height])}}
-    intact = Image.new('RGB', (240, 180), FACE)
-    intact.paste((155, 25, 32), (left, top), mask)
-    glyph, _, valid = _extract(np.asarray(intact), row, 0, shear=0)
-    assert valid and glyphs.match(glyph)[0] == '4'
-    # Glare fades the diagonal left of the four's vertical stem. It is still
-    # visible on the card, but treating it as paper leaves a different shape.
     coverage = np.asarray(mask, dtype=float) / 255
-    coverage[:round(height * .68), :round(width * .51)] *= diagonal_contrast
+    rows, columns = region
+    coverage[:round(height * rows), :round(width * columns)] *= contrast
     face, ink = np.array(FACE), np.array((155, 25, 32))
     patch = (face + (ink - face) * coverage[..., None]).astype(np.uint8)
-    damaged = Image.new('RGB', (240, 180), FACE)
-    damaged.paste(Image.fromarray(patch), (left, top))
-    glyph, _, valid = _extract(np.asarray(damaged), row, 0, shear=0)
-    assert glyph is None and not valid
+    image = Image.new('RGB', (240, 180), FACE)
+    image.paste(Image.fromarray(patch), (left, top))
+    return np.asarray(image), row
+
+
+@pytest.mark.parametrize('contrast', [.05, .15, .25, .30, .35, .45])
+def test_faded_four_diagonal_is_never_named_as_another_rank(contrast):
+    # Glare fades the diagonal left of the four's vertical stem. A stroke that
+    # is still visible joins the glyph (hysteresis); a vanishing one leaves a
+    # J-like stem, which must stay unknown rather than become a J.
+    image, row = _faded('4', (.68, .51), 1.0)
+    assert _read_crop(image, row) == '4'
+    image, row = _faded('4', (.68, .51), contrast)
+    assert _read_crop(image, row) in (None, '4')
+    if contrast >= .30:
+        assert _read_crop(image, row) == '4'
+
+
+@pytest.mark.parametrize('contrast', [.25, .35, .5])
+def test_faint_hairline_leg_of_an_ace_is_never_another_rank(contrast):
+    # This skin's A has a hairline left leg that blurs below the ink threshold.
+    image, row = _faded('A', (1.0, .45), contrast)
+    assert _read_crop(image, row) in (None, 'A')
+
+
+@pytest.mark.parametrize('seed', [3, 11, 17, 18])
+def test_cut_deck_tens_beside_drawn_borders_are_never_jacks(seed):
+    # The next card's drawn border can swallow the cut arc of a ten's zero,
+    # leaving a "1" that the fonts read as J. A deck-count conflict must not
+    # be what hides such a read: no slot may need one.
+    image, truth = make_grid(seed)
+    draft = _assert_draft(read_full_deal(image), truth, minimum_read=45)
+    assert not [slot for slot, card in draft['cards'].items() if card.get('tier') == 'deck_conflict']
+
+
+def test_bezel_marks_and_bridged_ranks_do_not_shift_the_deal():
+    # A mark past two rows' right ends and a stroke joining two deck ranks
+    # must neither move the screen edges nor merge two slots into one.
+    image, truth = make_grid(3)
+    draw = ImageDraw.Draw(image)
+    for row in (1, 2):
+        x, y = _positions(row)[-1]
+        draw.rectangle((x + 150, y + 5, x + 158, y + 52), fill=(20, 20, 20))
+    x, y = _positions(2)[9]
+    draw.rectangle((x + 30, y + 30, x + 64, y + 33), fill=(22, 24, 25))
+    draft = _assert_draft(read_full_deal(image), truth, minimum_read=45)
+    assert not [slot for slot, card in draft['cards'].items() if card.get('tier') == 'deck_conflict']

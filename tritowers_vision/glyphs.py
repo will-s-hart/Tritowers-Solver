@@ -44,8 +44,8 @@ def corner_patch(image_rgb, H, card_xy, box=TABLEAU_CORNER):
     return patch
 
 
-def ink_mask(patch):
-    """Pixels that differ from the card face colour (rank, pip, anything that is not the face)."""
+def ink_distance(patch):
+    """Colour distance of every pixel from the card face, and the ink threshold for it."""
     a = patch.astype(np.float32)
     v = a.max(axis=2); chroma = (v - a.min(axis=2)) / (v + 1)
     face_px = (v >= np.percentile(v, 60)) & (chroma < 0.35)
@@ -53,7 +53,12 @@ def ink_mask(patch):
     d = cv2.GaussianBlur(np.sqrt(((a - face) ** 2).sum(axis=2)), (0, 0), 0.8)    # calms moire and JPEG noise
     d8 = np.clip(d, 0, 255).astype(np.uint8)
     otsu, _ = cv2.threshold(d8, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    thr = max(45.0, min(float(otsu), 0.45 * float(np.linalg.norm(face))))
+    return d, max(45.0, min(float(otsu), 0.45 * float(np.linalg.norm(face))))
+
+
+def ink_mask(patch):
+    """Pixels that differ from the card face colour (rank, pip, anything that is not the face)."""
+    d, thr = ink_distance(patch)
     return (d > thr).astype(np.uint8)
 
 
@@ -113,10 +118,14 @@ def extract(patch, scale=1.0):
     raw, (x0, y0, x1, y1) = result
     unit = PX * scale
     height = (y1 - y0) / unit
-    valid = bool(15 <= height <= 40 and 3 <= x0 / unit <= 30 and 3 <= y0 / unit <= 23
+    # A browser-resampled photo can register a card ~10 units low; the index
+    # is still whole (the bottom check) and far above the suit pip (~50).
+    valid = bool(15 <= height <= 40 and 3 <= x0 / unit <= 30 and 3 <= y0 / unit <= 26
                  and x1 < patch.shape[1] - 2 and y1 < patch.shape[0] - 2)
     detail = {"valid": valid, "reason": "index_inside_card" if valid else "partial_or_displaced_index",
               "box": [x0, y0, x1, y1]}
+    if valid:
+        detail["counters"] = raw_holes(raw > .5)
     return (normalize(raw) if valid else None), detail
 
 def _render_bank(fonts):
@@ -163,6 +172,19 @@ def holes(g, thr=0.5):
     return sum(1 for i in range(2, n) if st[i, cv2.CC_STAT_AREA] >= 3)
 
 
+def raw_holes(mask):
+    """Enclosed counters of a full-resolution glyph mask.
+
+    Shrinking a glyph to GH rows can close a narrow opening (the curl of a
+    3) into a false counter; counting at the extracted resolution avoids it.
+    Specks under 5% of the glyph height across are ignored.
+    """
+    inv = np.pad((~np.asarray(mask, bool)).astype(np.uint8), 1, constant_values=1)
+    n, _, st, _ = cv2.connectedComponentsWithStats(inv, connectivity=4)
+    least = max(3.0, (0.05 * mask.shape[0]) ** 2)
+    return sum(1 for i in range(2, n) if st[i, cv2.CC_STAT_AREA] >= least)
+
+
 # Only the immutable, public font bank is cached. Private inputs and in-image
 # examples live for one read, so switching photos cannot contaminate later reads.
 _FONT_MATRIX = None
@@ -193,7 +215,8 @@ def _prepared(templates):
     return _prepare(templates)
 
 
-def _ranked(g, templates):
+def _ranked(g, templates, counters=None):
+    """Best score per rank; counters overrides the hole count measured on g."""
     ranks, matrix, norms = _prepared(templates)
     if not ranks:
         return []
@@ -201,11 +224,97 @@ def _ranked(g, templates):
     query = blurred.ravel() - blurred.mean()
     # einsum avoids a multithreaded BLAS launch for these small, frequent dots.
     scores = np.einsum("ij,j->i", matrix, query, dtype=np.float64) / (norms * np.linalg.norm(query) + 1e-6)
-    h, best = holes(g), {}
+    h, best = holes(g) if counters is None else counters, {}
     for rank, score in zip(ranks, scores):
         value = float(score) - (HOLE_PENALTY if h not in HOLES.get(rank, {h}) else 0)
         best[rank] = max(best.get(rank, -1.0), value)
     return sorted(best.items(), key=lambda kv: -kv[1])
+
+
+def _left_aligned(a, width):
+    """A glyph scaled to GH rows, its left edge at a fixed column, cut at width columns."""
+    out = np.zeros((GH, GW), np.float32)
+    cols = np.nonzero(a.max(axis=0) > .05)[0]
+    if not len(cols):
+        return out
+    a = a[:, cols.min():cols.max() + 1][:, :width]
+    left = (GW - width) // 2
+    out[:, left:left + a.shape[1]] = a
+    return out
+
+
+_CLIPPED = {}
+
+
+def _clipped_bank(width):
+    """Font templates cut at one visible width: ranks, unit shifted rows, hole counts (cached)."""
+    if width not in _CLIPPED:
+        ranks, rows, counts = [], [], []
+        for rank, template in font_bank():
+            cut = _left_aligned(template, width)
+            shifted = np.asarray([s.ravel() - s.mean() for s in rank2._shifts(cv2.GaussianBlur(cut, (0, 0), 0.8))], np.float32)
+            ranks.append(rank); counts.append(holes(cut))
+            rows.append(shifted / (np.linalg.norm(shifted, axis=1, keepdims=True) + 1e-6))
+        _CLIPPED[width] = (ranks, np.stack(rows), np.asarray(counts))
+    return _CLIPPED[width]
+
+
+def warm():
+    """Prepare the font matrix and the clipped banks for the widths a deck index can show."""
+    _prepared(font_bank())
+    for width in range(12, GW + 1):
+        _clipped_bank(width)
+
+
+def clipped_ranked(raw, templates=None):
+    """Rank a glyph whose right side is hidden by an overlapping card.
+
+    Every template (the font bank, or same-image examples) is cut at the same
+    visible width as the query, so a partial glyph is compared only with the
+    visible part of each rank; a template cannot lose for strokes the photo
+    cannot show. Hole counts are taken from the cut template, so an opened
+    zero is not penalised.
+    """
+    h, w = raw.shape
+    width = max(1, min(GW, int(round(w * GH / h))))
+    query = np.zeros((GH, GW), np.float32)
+    query[:, (GW - width) // 2:(GW - width) // 2 + width] = cv2.resize(
+        raw.astype(np.float32), (width, GH), interpolation=cv2.INTER_AREA)
+    blurred = cv2.GaussianBlur(query, (0, 0), 0.8)
+    q = blurred.ravel() - blurred.mean()
+    qn, qh, best = np.linalg.norm(q) + 1e-6, raw_holes(raw > .5), {}
+    if templates is None:
+        ranks, rows, counts = _clipped_bank(width)
+        scores = np.einsum("tsj,j->ts", rows, q / qn, dtype=np.float64).max(axis=1) - HOLE_PENALTY * (counts != qh)
+        for rank, score in zip(ranks, scores):
+            best[rank] = max(best.get(rank, -1.0), float(score))
+        return sorted(best.items(), key=lambda kv: -kv[1])
+    for rank, template in templates:
+        cut = _left_aligned(template, width)
+        rows = np.asarray([s.ravel() - s.mean() for s in rank2._shifts(cv2.GaussianBlur(cut, (0, 0), 0.8))], np.float32)
+        score = float(np.max(rows @ q / (np.linalg.norm(rows, axis=1) * qn + 1e-6)))
+        score -= HOLE_PENALTY if holes(cut) != qh else 0
+        best[rank] = max(best.get(rank, -1.0), score)
+    return sorted(best.items(), key=lambda kv: -kv[1])
+
+
+def ranked_many(gs, counters=None):
+    """_ranked against the font bank for many glyphs with one matrix product."""
+    ranks, matrix, norms = _prepared(font_bank())
+    if not len(gs):
+        return []
+    blurred = np.stack([cv2.GaussianBlur(g, (0, 0), 0.8).ravel() for g in gs])
+    query = blurred - blurred.mean(axis=1, keepdims=True)
+    scores = (query @ matrix.T) / (np.linalg.norm(query, axis=1)[:, None] * norms[None] + 1e-6)
+    names = sorted(set(ranks), key=RANKS.index)
+    columns = {name: np.array([i for i, r in enumerate(ranks) if r == name]) for name in names}
+    best = {name: scores[:, idx].max(axis=1) for name, idx in columns.items()}
+    out = []
+    for k, g in enumerate(gs):
+        h = holes(g) if counters is None or counters[k] is None else counters[k]
+        row = {name: float(best[name][k]) - (HOLE_PENALTY if h not in HOLES.get(name, {h}) else 0) for name in names}
+        out.append(sorted(row.items(), key=lambda kv: -kv[1]))
+    return out
 
 
 def font_tier_enabled():
@@ -213,14 +322,14 @@ def font_tier_enabled():
     return os.environ.get("TT_FONT_TIER", "1").strip() != "0"
 
 
-def match(g, photo_templates=(), *, font_scores=None):
+def match(g, photo_templates=(), *, font_scores=None, counters=None):
     """(rank or None, score, margin, tier). Photo templates (same skin) first, then the bundled font bank.
 
     The photo tier's margin is taken against all 13 ranks: a rank with no photo template competes through its font
     score, so a glyph whose true rank has no template cannot win just because its rivals are missing."""
     if g is None or g.sum() == 0: return None, 0.0, 0.0, "none"
-    font = dict(_ranked(g, font_bank())) if font_scores is None else font_scores
-    photo = dict(_ranked(g, photo_templates)) if len(photo_templates) else {}
+    font = dict(_ranked(g, font_bank(), counters)) if font_scores is None else font_scores
+    photo = dict(_ranked(g, photo_templates, counters)) if len(photo_templates) else {}
     best = (0.0, 0.0)
     if photo:
         top = max(photo, key=photo.get)
@@ -242,27 +351,121 @@ def font_fit(found):
     return float(np.median(tops)) if tops else 0.0
 
 
-def read_ranks(found, templates=()):
+def read_ranks(found, templates=(), counters=None):
     """Rank every glyph of one image: {key: (rank or None, score, margin, tier)}.
+
+    counters optionally gives each glyph's hole count measured before scaling.
 
     1. match() each glyph; font-tier reads are dropped when the image's font fit is below FONT_FIT.
     2. Confident reads become same-skin templates for the glyphs that abstained (a board repeats ranks, and copies of
        a rank on one screen are near-identical); only the photo-tier gate can accept them."""
-    templates = list(templates)
-    font_scores = {k: dict(_ranked(g, font_bank())) if g is not None and g.sum() else {} for k, g in found.items()}
+    templates, counters = list(templates), counters or {}
+    usable = [k for k, g in found.items() if g is not None and g.sum()]
+    batch = dict(zip(usable, ranked_many([found[k] for k in usable], [counters.get(k) for k in usable])))
+    font_scores = {k: dict(batch[k]) if k in batch else {} for k in found}
     tops = [max(scores.values()) for scores in font_scores.values() if scores]
     fit = float(np.median(tops)) if tops else 0.0
     out = {}
     for k, g in found.items():
-        r = match(g, templates, font_scores=font_scores[k])
+        r = match(g, templates, font_scores=font_scores[k], counters=counters.get(k))
         if r[3] == "font" and fit < FONT_FIT: r = (None, r[1], r[2], "font_unfit")
         out[k] = r
     local = [(r[0], found[k]) for k, r in out.items() if r[0]]
     for k, g in found.items():
         if out[k][0] is None and local:
-            r = match(g, templates + local, font_scores=font_scores[k])
+            r = match(g, templates + local, font_scores=font_scores[k], counters=counters.get(k))
             if r[3] == "photo": out[k] = (r[0], r[1], r[2], "same_image")
     return out, fit
+
+
+def consensus(keys, reads, similar, ranking, vetoed=None):
+    """Name a rank that no single crop proves but several identical crops do.
+
+    Copies of one rank on a photo are near-identical. Unread crops whose
+    font ranking puts the same rank R first (at the font score) and that
+    look alike (photo score for every pair) are named R together, but only
+    when R is not yet read on this photo and every rival within the font
+    margin has been read here and looks unlike them by the photo margin. Two
+    separate groups for one rank cancel out. Nothing is inferred from how
+    many cards of a rank remain. similar(a, b) and ranking(a) take keys.
+    """
+    seen = {}
+    for key, read in reads.items():
+        if read[0] and key in keys:
+            seen.setdefault(read[0], []).append(key)
+    candidates = {}
+    for key in keys:
+        if reads[key][0] is None:
+            ranked = ranking(key)
+            if len(ranked) > 1 and ranked[0][1] >= FONT_SCORE and ranked[0][0] not in seen:
+                candidates[key] = ranked
+    named = {}
+    for rank in sorted({ranked[0][0] for ranked in candidates.values()}):
+        members = sorted(key for key, ranked in candidates.items() if ranked[0][0] == rank)
+        if vetoed:
+            members = [key for key in members if not vetoed(key, rank)]
+        pair = {(a, b): similar(a, b) for a in members for b in members if a < b}
+        look = lambda a, b: pair[(a, b) if a < b else (b, a)]
+        group = [a for a in members if all(look(a, b) >= PHOTO_SCORE for b in members if b != a)]
+        if len(group) < 2:
+            continue
+        cohesion = min(look(a, b) for a in group for b in group if a < b)
+        if all(rival in seen and max(similar(key, other) for other in seen[rival]) <= cohesion - PHOTO_MARGIN
+               for key in group for rival, score in candidates[key][1:] if score > candidates[key][0][1] - FONT_MARGIN):
+            for key in group:
+                top, second = candidates[key][0][1], candidates[key][1][1]
+                named[key] = (rank, top, top - second, "same_image_consensus")
+    return named
+
+
+def exclusion(keys, reads, similar, ranking, vetoed=None):
+    """Name a lone crop when every close font rival is ruled out by this photo.
+
+    A rival within the font margin is ruled out only when it has been read
+    on this photo and the crop looks unlike every copy of it by the photo
+    margin below the photo score. The named rank must not be read here yet.
+    """
+    seen = {}
+    for key, read in reads.items():
+        if read[0] and key in keys:
+            seen.setdefault(read[0], []).append(key)
+    named = {}
+    for key in keys:
+        if reads[key][0] is not None:
+            continue
+        ranked = ranking(key)
+        if len(ranked) < 2 or ranked[0][1] < FONT_SCORE or ranked[0][0] in seen:
+            continue
+        rank, top = ranked[0]
+        if vetoed and vetoed(key, rank):
+            continue
+        rivals = [rival for rival, score in ranked[1:] if score > top - FONT_MARGIN]
+        if all(rival in seen and max(similar(key, other) for other in seen[rival]) <= PHOTO_SCORE - PHOTO_MARGIN
+               for rival in rivals):
+            named[key] = (rank, top, top - ranked[1][1], "same_image_exclusion")
+    return named
+
+
+def agree(found, reads, counters=None):
+    """Consensus for complete glyphs of one image, then the photo tier against the newly named copies."""
+    counters = counters or {}
+    keys = [k for k, g in found.items() if g is not None and g.sum()]
+    if not keys or not font_tier_enabled():
+        return reads
+    def similar(a, b):
+        return min(_ranked(found[a], [("-", found[b])])[0][1], _ranked(found[b], [("-", found[a])])[0][1])
+    ranking = lambda k: _ranked(found[k], font_bank(), counters.get(k))
+    for _ in range(4):
+        named = consensus(keys, reads, similar, ranking) or exclusion(keys, reads, similar, ranking)
+        if not named:
+            break
+        reads.update(named)
+        local = [(reads[k][0], found[k]) for k in keys if reads[k][0]]
+        for k in keys:
+            if reads[k][0] is None:
+                r = match(found[k], local, counters=counters.get(k))
+                if r[3] == "photo": reads[k] = (r[0], r[1], r[2], "same_image")
+    return reads
 
 
 def build_bank(fonts, out=BANK):

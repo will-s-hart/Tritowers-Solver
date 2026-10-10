@@ -55,7 +55,10 @@ def read_photo(source, templates=(), manual_corners=None):
             found[slot], cards[slot]["crop"] = glyphs.extract(glyphs.corner_patch(rgb, reg.H, scene.RECTS[p][:2]), 1.0)
     cards["waste"] = {"state": "face_up", "rank": None, "score": 0.0, "margin": 0.0}
     found["waste"], cards["waste"]["crop"] = glyphs.extract(glyphs.corner_patch(rgb, reg.H, scene.waste_rect(reg.waste_dy)[:2], glyphs.WASTE_CORNER), WASTE_SCALE)
-    ranks, fit = glyphs.read_ranks(found, templates)
+    counters = {slot: cards[slot]["crop"].get("counters") for slot in found if cards[slot]["crop"].get("counters") is not None}
+    ranks, fit = glyphs.read_ranks(found, templates, counters)
+    if fit >= glyphs.FONT_FIT:
+        ranks = glyphs.agree(found, ranks, counters)
     for slot, (rank, score, margin, tier) in ranks.items():
         cards[slot].update(rank=rank, score=round(score, 2), margin=round(margin, 2), tier=tier)
     review = set()

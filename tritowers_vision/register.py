@@ -140,6 +140,7 @@ _AFFINE, _HOMOGRAPHY = cv2.MOTION_AFFINE, cv2.MOTION_HOMOGRAPHY
 # (template resolution, motion model, iterations, mask large mismatches, use cards). The first round aligns only the
 # screen-level structure (parchment band, dark band, screen edges) with every card area masked, so a wrong guess about
 # which cards are present cannot steer it; then affine and perspective rounds on the full scene.
+MAX_REFINEMENTS, MIN_REFINE_QUALITY = 6, .40
 SCHEDULE = ((0.125, _AFFINE, 50, False, False), (0.125, _AFFINE, 40, False, True), (0.25, _AFFINE, 40, False, True),
             (0.25, _HOMOGRAPHY, 40, True, True), (0.25, _HOMOGRAPHY, 30, True, True))
 
@@ -318,7 +319,12 @@ def register(image, manual_corners=None):
     scored = [(m, H, w, _evaluate(w, H)) for m, H, w in cands]
     scored.sort(key=lambda candidate: -candidate[3][0])
     best = None
-    for method, H0, candidate_work, initial in scored:
+    for k, (method, H0, candidate_work, initial) in enumerate(scored):
+        # Refinement is the costly step when no layout is supported. Accepted
+        # layouts started at quality >= .52 in every local and generated check
+        # (126 scenes), so weak starts are not refined, and at most six are.
+        if k and (k >= MAX_REFINEMENTS or initial[0] < MIN_REFINE_QUALITY):
+            break
         # Refining many equivalent starts cannot improve a supported alignment;
         # stop when both image evidence and scene-state checks pass strongly.
         H, q, present, dy, margins = _refine(candidate_work, H0)

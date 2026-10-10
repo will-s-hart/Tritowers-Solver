@@ -18,6 +18,13 @@ def api_geo():
     return {"geo": {str(k): v for k, v in GEO.items()}, "aspect": ASPECT}
 
 
+def warm_vision():
+    """Build the public font caches while idle, so the first photo read does not pay for them."""
+    from tritowers_vision import glyphs
+    glyphs.warm()
+    return {"ok": True}
+
+
 def health():
     return {"ok": True, "engine": "pyodide", "templates": 0}
 

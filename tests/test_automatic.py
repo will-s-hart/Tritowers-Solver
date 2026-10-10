@@ -156,3 +156,33 @@ def test_two_digit_ten_keeps_tall_one_left_of_zero():
     cv2.ellipse(patch, (86, 88), (24, 48), 0, 0, 360, (10, 10, 10), 8)
     raw = glyphs.raw_glyph(patch)
     assert raw is not None and raw.shape[1] > 65
+
+
+def test_index_registered_slightly_low_is_read_but_a_displaced_one_is_not():
+    # A browser-resampled phone photo registered the leftmost cards ~10 layout
+    # units low; the index is still whole and well above the suit pip.
+    from PIL import Image, ImageDraw
+    from test_full_deal import _public_font
+    from tritowers_vision import glyphs
+    unit = glyphs.PX
+    width, height = (glyphs.TABLEAU_CORNER[2] - glyphs.TABLEAU_CORNER[0]) * unit, (glyphs.TABLEAU_CORNER[3] - glyphs.TABLEAU_CORNER[1]) * unit
+    font = _public_font(33 * unit)
+    def corner(top):
+        image = Image.new("RGB", (width, height), (247, 241, 224))
+        box = font.getbbox("5")
+        ImageDraw.Draw(image).text((15 * unit - box[0], round(top * unit) - box[1]), "5", font=font, fill=(20, 20, 25))
+        return np.asarray(image)
+    glyph, detail = glyphs.extract(corner(24.5))
+    assert detail["valid"] and glyphs.match(glyph, counters=detail["counters"])[0] == "5"
+    assert not glyphs.extract(corner(28))[1]["valid"]
+
+
+def test_rejected_photos_refine_only_plausible_candidates(monkeypatch):
+    from PIL import Image
+    from tritowers_vision import register
+    refined = []
+    original = register._refine
+    monkeypatch.setattr(register, "_refine", lambda work, H0: refined.append(1) or original(work, H0))
+    noise = Image.fromarray((np.random.default_rng(1).random((600, 800, 3)) * 255).astype(np.uint8))
+    assert not register.register(noise).trusted
+    assert 1 <= len(refined) <= register.MAX_REFINEMENTS
