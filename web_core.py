@@ -6,7 +6,7 @@ IDs and replayable session actions make retries and refresh safe.
 from collections import OrderedDict
 import uuid
 import solver_ui as ui
-from web_shared import GEO, ASPECT, view, solve_deal, photo_response
+from web_shared import GEO, ASPECT, view, solve_deal, photo_response, advice_for
 
 _sessions = OrderedDict()
 _replies = OrderedDict()
@@ -91,9 +91,7 @@ def api_act(body):
             elif op == "undo": s.undo()
             elif op == "recommend":
                 sims = min(ui.MAX_SIMULATIONS, ui.to_int(body.get("sims", 1200), "Simulations", 1))
-                text, pos, proven, rate, runs = ui.recommend_detail(s, sims, body.get("seed"))
-                if pos: text = text.replace(f"Play position {pos:02d}.", f"Play the {s.game.board[pos-1]} marked with the blue star.")
-                entry["advice"] = {"text": text, "pos": pos, "proven": proven, "rate": rate, "sims": runs, "foresight": None}
+                entry["advice"] = advice_for(s, sims, body.get("seed"))
             elif op != "state": raise ValueError("Unknown action.")
             if op in ("play", "reveal", "draw", "undo"):
                 entry["advice"] = None; message = s.log[-1]

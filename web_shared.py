@@ -22,6 +22,34 @@ def geometry():
     return {p: (round(xs[p] * XU / CW * 100, 3), round(ys[p] * YU / CH * 100, 3)) for p in range(1, 29)}, round(CW / CH, 4)
 GEO, ASPECT = geometry()
 
+def next_action(game, advice=None):
+    """The next step the app recommends, stated explicitly; never inferred from null fields.
+
+    {"type": "done"} when the tableau is clear, {"type": "reveal", "positions": [...]}
+    while uncovered cards await their ranks, the current advice's action when there is
+    one, a forced {"type": "draw"} when no card can be played, otherwise {"type": "none"}.
+    can_draw in the view states permission only; this states the recommendation.
+    """
+    if game.remaining() == 0: return {"type": "done", "reason": "won"}
+    pending = ui.pending_reveals(game)
+    if pending: return {"type": "reveal", "positions": pending}
+    if advice and advice.get("action"): return dict(advice["action"])
+    if not game.legal_moves():
+        return {"type": "draw", "forced": True} if game.stock_remaining > 0 else {"type": "none", "reason": "no_moves"}
+    return {"type": "none", "reason": "awaiting_advice"}
+
+def stock_next(game):
+    """The next stock card when its rank is known (a known-order stock, or the machine joker left last), else None."""
+    if game.stock_known: return game.stock[0] if game.stock else None
+    return solver.JOKER if game.joker_in_stock and game.stock_remaining == 1 else None
+
+def advice_for(session, sims, seed=None, foresight=False):
+    """Advice for the current state, with its action stated explicitly (HTTP and browser worker)."""
+    text, pos, proven, rate, runs, action = ui.recommend_action(session, sims, seed)
+    if pos: text = text.replace(f"Play position {pos:02d}.", f"Play the {session.game.board[pos - 1]} marked with the blue star.")
+    return {"text": text, "pos": pos, "proven": proven, "rate": rate, "sims": runs, "action": action,
+            "foresight": ui.foresight_line(session, pos, seed) if foresight and pos else None}
+
 def view(entry, message="", ok=True, extra=None):
     s = entry["s"]; g = s.game; snap = g.state_snapshot(); exposed = set(g.exposed()); legal = set(g.legal_moves()); pend = set(ui.pending_reveals(g))
     advice = entry.get("advice")
@@ -35,6 +63,7 @@ def view(entry, message="", ok=True, extra=None):
     out = {"ok": ok, "message": message, "cells": cells, "aspect": ASPECT, "waste": snap["waste"], "remaining": snap["remaining"],
            "stock": snap["stock_remaining"], "joker": bool(snap.get("joker_in_stock")), "status": ui.status(s), "pending": sorted(pend), "over": over,
            "can_undo": bool(s.history), "can_draw": (not over) and (not pend) and snap["stock_remaining"] > 0,
+           "stock_known": bool(g.stock_known), "stock_next": stock_next(g), "next_action": next_action(g, advice),
            "log": s.log[-12:], "advice": advice, "rev": len(s.log)}
     if extra: out.update(extra)
     return out
@@ -42,19 +71,23 @@ def view(entry, message="", ok=True, extra=None):
 def _replay_frames(game, moves):
     """Replay a returned line on a fresh copy and return (frames, texts). Raises ValueError if any step is illegal."""
     g = game.copy(); frames = []; texts = []
-    def frame(g, nxt):
+    def frame(g, nxt, action):
         f = view({"s": ui.Session(g.copy()), "advice": None}); f.pop("log", None); f.pop("advice", None)
-        f["next"] = nxt; return f
+        # next (position or None) is kept for older clients; next_action is explicit.
+        f["next"] = nxt; f["next_action"] = action; return f
     for mv in moves:
         nxt = mv[1] if mv[0] == "play" else None
-        frames.append(frame(g, nxt))
+        if mv[0] == "play": action = {"type": "play", "pos": int(mv[1])}
+        elif mv[0] == "draw": action = {"type": "draw", "card": g.stock[0] if g.stock else None}
+        else: action = None
+        frames.append(frame(g, nxt, action))
         if mv[0] == "play":
             card = g.play(int(mv[1])); texts.append(f"Play the {card} (position {int(mv[1])})")
         elif mv[0] == "draw":
             if not g.stock: raise ValueError("Line draws from an empty stock.")
             card = g.stock.pop(0); g.waste = card; texts.append(f"Draw from the stock: {card}")
         else: raise ValueError("Unknown step.")
-    frames.append(frame(g, None))
+    frames.append(frame(g, None, {"type": "done", "reason": "won"}))
     if g.remaining() != 0: raise ValueError("Line does not clear the tableau.")
     return frames, texts
 

@@ -122,12 +122,13 @@ def test_recommend_uses_server_simulation_cap_and_action_clears_advice(monkeypat
     calls = []
     def recommend(session, sims, seed):
         calls.append(sims)
-        return "Play position 01.", 1, True, 1.0, 0
-    monkeypatch.setattr(ui, "recommend_detail", recommend)
+        return "Play position 01.", 1, True, 1.0, 0, {"type": "play", "pos": 1}
+    monkeypatch.setattr(ui, "recommend_action", recommend)
     sid = new()["sid"]
     result = act(sid, "recommend", sims=100000, req_id="recommend")
     assert calls == [ui.MAX_SIMULATIONS]
     assert "Play the 6" in result["advice"]["text"]
+    assert result["next_action"] == result["advice"]["action"] == {"type": "play", "pos": 1}
     assert act(sid, "recommend", sims=100000, req_id="recommend") == result
     assert calls == [ui.MAX_SIMULATIONS]
     assert act(sid, "draw", rank="9")["advice"] is None

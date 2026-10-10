@@ -1,5 +1,5 @@
 """Browser end-to-end tests for web_app.py (real Chromium via Playwright, local server)."""
-import os, socket, subprocess, sys, time
+import os, random, socket, subprocess, sys, time
 from pathlib import Path
 import pytest
 pytest.importorskip("playwright.sync_api")
@@ -147,3 +147,76 @@ def test_start_survives_a_40_second_outage(server, browser):
     page.wait_for_selector("#board .c", timeout=90000)
     assert len(seen) >= 5 and "Could not reach" not in page.locator("#msg").inner_text()
     ctx.close()
+
+
+LONE_NINE = ["9"] + ["--"] * 27
+
+
+def _piles(page):
+    return page.evaluate("""({stock:S.stock,waste:S.waste,next:S.next_action,top:document.querySelector('#stockTop').textContent,
+        cue:document.querySelector('#stockPile').classList.contains('cue'),disabled:document.querySelector('#stockPile').disabled})""")
+
+
+def _settle(page):
+    page.wait_for_function("pendingN===0&&!busy", timeout=60000)
+
+
+def _replay(page):
+    return page.evaluate("""({step,cue:document.querySelector('#solStockPile').classList.contains('cue'),
+        top:document.querySelector('#solStockTop').textContent,stars:document.querySelectorAll('#solBoard .c.rec').length})""")
+
+
+def exercise_stock_area(browser, url):
+    """Waste/stock area and draw cue at phone width; shared by the HTTP and Pyodide suites."""
+    for motion, animation in (("reduce", "none"), ("no-preference", "glow")):
+        ctx = browser.new_context(viewport=VIEWPORTS["phone"], reduced_motion=motion); page = ctx.new_page()
+        errors = []; page.on("pageerror", lambda e: errors.append(str(e)))
+        page.goto(url); page.wait_for_selector("#editBoard .c", timeout=120000)
+        page.click("summary:has-text('Paste the board')"); page.fill("#paste", " ".join(LONE_NINE)); page.click("#pasteBtn")
+        page.click("#wasteBtn"); page.click('#keys button[data-k="5"]')
+        while page.inner_text("#stV") != "2": page.click("#stM")
+        page.click("#startBtn"); page.wait_for_selector("#board .c"); _settle(page)
+        # No card can be played on the 5: the face-down stock is the next action.
+        state = _piles(page)
+        assert state["next"]["type"] == "draw" and state["cue"] and state["top"] == "" and page.is_visible("#stockPile .cue-tag")
+        assert page.evaluate("getComputedStyle(document.querySelector('#stockPile .pcard')).animationName") == animation
+        pile, board, controls = (page.locator(s).bounding_box() for s in ("#stockPile", "#board", "#recBtn"))
+        assert board["y"] + board["height"] <= pile["y"] + 1 and pile["y"] + pile["height"] <= controls["y"] + 1
+        assert pile["y"] + pile["height"] <= VIEWPORTS["phone"]["height"]
+        # A double tap opens the keypad once and draws once.
+        page.locator("#stockPile").dblclick(); page.wait_for_selector("#sheet.open"); page.click('#keys button[data-k="8"]'); _settle(page)
+        state = _piles(page)
+        assert state["stock"] == 1 and state["waste"] == "8" and state["top"].endswith("Joker") and state["next"]["type"] != "draw"
+        page.click("#undoBtn"); _settle(page)
+        assert _piles(page)["stock"] == 2 and _piles(page)["cue"]
+        page.reload(); page.wait_for_selector("#board .c"); _settle(page)
+        assert _piles(page)["stock"] == 2 and _piles(page)["cue"] and page.inner_text("#wst") == "5"
+        page.click("#stockPile"); page.click('#keys button[data-k="8"]'); _settle(page)
+        # The last stock card is the machine joker: shown face up, drawn once without a keypad.
+        page.locator("#stockPile").dblclick(); _settle(page)
+        state = _piles(page)
+        assert state["stock"] == 0 and state["waste"] == "*" and page.inner_text("#wst") == "Joker"
+        assert state["top"] == "Empty" and state["disabled"] and not state["cue"]
+        assert not errors
+        ctx.close()
+    # Known-deal replay: the cue follows explicit next_action through Back/Next.
+    page = browser.new_page(viewport=VIEWPORTS["phone"]); page.goto(url); page.wait_for_selector("#editBoard .c", timeout=120000)
+    rng = random.Random(7); deck = [r for r in "A 2 3 4 5 6 7 8 9 10 J Q K".split() for _ in range(4)]; rng.shuffle(deck)
+    page.evaluate("deal=>{setMode(true);setup.board=deal.slice(0,28);setup.waste=deal[28];setup.order=[...deal.slice(29),'*'];setup.stock=24;setup.joker=true;drawEdit();drawStock()}", deck)
+    page.click("#solveBtn"); page.wait_for_selector("#solBody:not([hidden])", timeout=60000)
+    kinds = page.evaluate("SOL.frames.map(f=>f.next_action.type)")
+    first_draw = kinds.index("draw")
+    assert kinds[-1] == "done" and _replay(page)["stars"] == (kinds[0] == "play")
+    while _replay(page)["step"] < first_draw: page.click("#solNext")
+    shown = _replay(page)
+    assert shown["cue"] and shown["stars"] == 0 and shown["top"].startswith("Next")
+    page.locator("#solStockPile").dblclick()
+    after = _replay(page)
+    assert after["step"] == first_draw + 1 + (kinds[first_draw + 1] == "draw")
+    page.click("#solPrev")
+    assert _replay(page)["step"] == after["step"] - 1
+    page.close()
+
+
+def test_stock_area_and_draw_cue(server, browser):
+    exercise_stock_area(browser, server)

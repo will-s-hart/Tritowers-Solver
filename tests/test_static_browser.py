@@ -143,3 +143,8 @@ def test_real_worker_full_grid_review_and_solve(static_site,browser):
     assert page.evaluate('SOL.frames[SOL.frames.length-1].remaining')==0
     assert not [url for url in requests if '/api/' in url] and not errors
     page.close()
+
+
+def test_real_worker_stock_area_and_draw_cue(static_site,browser):
+    from test_web_e2e import exercise_stock_area
+    exercise_stock_area(browser,static_site)

@@ -146,6 +146,16 @@ def foresight_line(session, position, seed=None):
 
 def recommend_detail(session, simulations=solver.SIMULATIONS, seed=None):
     """Return (text, position|None, proven|None, rate|None, sims)."""
+    return recommend_action(session, simulations, seed)[:5]
+
+def recommend_action(session, simulations=solver.SIMULATIONS, seed=None):
+    """Return (text, position|None, proven|None, rate|None, sims, action).
+
+    action states the recommendation explicitly, so callers never infer it
+    from the text or from a missing position: {"type": "play", "pos": p},
+    {"type": "draw"} (with "forced": True when no card can be played), or
+    {"type": "none", "reason": ...} when nothing is recommended.
+    """
     guard_open(session)
     sims = to_int(simulations, "Simulations", 1, MAX_SIMULATIONS)
     rng = random.Random(to_int(seed, "Seed")) if seed not in (None, "") else None
@@ -157,16 +167,22 @@ def recommend_detail(session, simulations=solver.SIMULATIONS, seed=None):
         if exact.status == "solved" and exact.moves:
             step = exact.moves[0]
             if step[0] == "draw":
-                return "Draw from the stock. Proven: a verified winning line starts with this draw.", None, True, 1.0, 0
-            return f"Play position {step[1]:02d}. Proven: a verified winning line starts with this move.", step[1], True, 1.0, 0
+                return ("Draw from the stock. Proven: a verified winning line starts with this draw.", None, True, 1.0, 0,
+                        {"type": "draw", "forced": not game.legal_moves()})
+            return (f"Play position {step[1]:02d}. Proven: a verified winning line starts with this move.", step[1], True, 1.0, 0,
+                    {"type": "play", "pos": step[1]})
         if exact.status == "unsolvable":
-            return "No winning line exists with these known cards (draw only when stuck).", None, False, 0.0, 0
+            return ("No winning line exists with these known cards (draw only when stuck).", None, False, 0.0, 0,
+                    {"type": "none", "reason": "no_winning_line"})
     rec = solver.best_move(game, simulations=sims, rng=rng,
                            time_budget=None if rng is not None else RECOMMEND_TIME_BUDGET)
     if rec is None:
-        return ("No legal move: draw from the stock." if session.game.stock_remaining else "No legal move and stock empty."), None, None, None, 0
-    if rec.is_proven: return f"Play position {rec.position:02d}. Proven: this move is guaranteed by the known cards.", rec.position, True, 1.0, 0
-    return (f"Play position {rec.position:02d}. Sampled estimate {rec.success_rate:.0%} over {rec.simulations} simulations. This is an estimate, not a proof."), rec.position, False, rec.success_rate, rec.simulations
+        if session.game.stock_remaining:
+            return "No legal move: draw from the stock.", None, None, None, 0, {"type": "draw", "forced": True}
+        return "No legal move and stock empty.", None, None, None, 0, {"type": "none", "reason": "no_moves"}
+    action = {"type": "play", "pos": rec.position}
+    if rec.is_proven: return f"Play position {rec.position:02d}. Proven: this move is guaranteed by the known cards.", rec.position, True, 1.0, 0, action
+    return (f"Play position {rec.position:02d}. Sampled estimate {rec.success_rate:.0%} over {rec.simulations} simulations. This is an estimate, not a proof."), rec.position, False, rec.success_rate, rec.simulations, action
 
 def recommend(session, simulations=solver.SIMULATIONS, seed=None):
     return recommend_detail(session, simulations, seed)[0]

@@ -8,7 +8,7 @@ from fastapi import FastAPI, File, Form, UploadFile, Request, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 import solver, solver_ui as ui
-from web_shared import GEO, ASPECT, view, solve_deal, photo_response
+from web_shared import GEO, ASPECT, view, solve_deal, photo_response, advice_for
 
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
 MAX_SESSIONS = 300
@@ -230,12 +230,7 @@ def _key(game):
 
 
 def _advice(game, sims=1200, seed=None):
-    tmp = ui.Session(game)
-    text, pos, proven, rate, count = ui.recommend_detail(tmp, sims, seed)
-    if pos: text = text.replace(f"Play position {pos:02d}.", f"Play the {game.board[pos - 1]} marked with the blue star.")
-    foresight = ui.foresight_line(tmp, pos, seed) if pos else None
-    return {"text": text, "pos": pos, "proven": proven, "rate": rate,
-            "sims": count, "foresight": foresight}
+    return advice_for(ui.Session(game), sims, seed, foresight=True)
 
 
 def _background_work():

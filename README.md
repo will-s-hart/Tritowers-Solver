@@ -51,6 +51,14 @@ The recognizer ships a bank rendered from open fonts, never owner photos or phot
 
 Measure no-bank recognition with `python tools/vision_eval.py --labels local/labels.json --readers v3 --regimes none`. The labels format is in `DATASET.md`; private captures and metadata belong under ignored `local/`. See `PHOTO-VALIDATION.md` for the issue crosswalk, measured results and remaining validation limits.
 
+## Play view
+
+Below the towers, a large face-up waste card sits beside the stock pile and its remaining count. The next stock card
+is shown only when known (a known deal, or the joker as the last card); otherwise the pile stays face down. When the
+next recommended action is a draw, the pile is outlined with a "Draw next" label (no animation under reduced motion),
+and tapping it draws, or steps the solution replay over that draw. API views and replay frames state this as
+`next_action` (`play`, `draw`, `reveal`, `done` or `none`) with `stock_next`; `can_draw` only means drawing is allowed.
+
 ## Browser-only app
 
 The static app runs the same Python solver and photo response adapter in a Pyodide worker. It starts loading immediately and never probes the retired HTTP origin. Build without deploying:

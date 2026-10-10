@@ -30,6 +30,21 @@ details{margin-top:8px;font-size:14px}textarea{width:100%;font:14px ui-monospace
 @media (min-width:600px){#sheet{align-items:center}#sheet .in{border-radius:18px}.keys{grid-template-columns:repeat(7,1fr)}}
 .seg{display:flex;gap:6px;margin:6px 0}.seg button{flex:1;font:600 15px system-ui;padding:10px;border-radius:10px;border:2px solid #d8d4c8;background:#fff;cursor:pointer}.seg button.on{border-color:var(--pri);background:#fff1e8}.chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.chip{min-width:48px;min-height:58px;display:flex;flex-direction:column;align-items:center;justify-content:center;border-radius:8px;border:1.5px solid #8a8a8a;background:var(--card);font:700 18px system-ui;cursor:pointer}.chip small{font-size:10px;font-weight:500;color:var(--mut)}ol.steps{padding-left:22px;margin:8px 0;max-height:220px;overflow:auto;font-size:15px}ol.steps li{padding:2px 0}ol.steps li.cur{font-weight:700;color:var(--blue)}.warn{background:#fff6e0;border-left:6px solid #e0a000;border-radius:8px;padding:10px 12px;font-size:15px}
 .log{font-size:13px;color:var(--mut);white-space:pre-wrap}
+.piles{display:flex;gap:28px;justify-content:center;align-items:flex-start;margin:10px 0 6px}
+.pile{display:flex;flex-direction:column;align-items:center;gap:6px;background:none;border:0;padding:4px 6px;margin:0;font:inherit;color:inherit;border-radius:14px;-webkit-tap-highlight-color:transparent}
+button.pile{cursor:pointer;touch-action:manipulation}button.pile:disabled{cursor:default;opacity:1}
+.plbl{font-size:14px;color:var(--mut)}.plbl b{color:var(--ink);font-size:17px}
+.pcard{position:relative;width:78px;height:106px;border-radius:10px;border:2px solid #8a8a8a;background:var(--card);display:flex;align-items:center;justify-content:center;font:700 40px system-ui;color:var(--ink)}
+.pcard.back{background:repeating-linear-gradient(45deg,#a33 0 6px,#8f2a2a 6px 12px);border-color:#722}
+.pcard.deep{box-shadow:3px 3px 0 -1px #fff,3px 3px 0 1px #722,6px 6px 0 -1px #fff,6px 6px 0 1px #722}
+.pcard.empty{background:none;border-style:dashed;color:var(--mut);font-size:15px;font-weight:600}
+.pcard small{position:absolute;top:4px;left:6px;font-size:11px;font-weight:600;color:var(--mut)}.pcard.joker{font-size:20px}
+.cue-tag{visibility:hidden;font:700 14px system-ui;color:#fff;background:var(--blue);border-radius:999px;padding:4px 12px}
+.pile.cue .pcard{outline:4px solid var(--blue);outline-offset:3px;box-shadow:0 0 0 9px rgba(28,110,213,.22),0 0 22px 8px rgba(28,110,213,.55)}
+.pile.cue .cue-tag{visibility:visible}
+@keyframes glow{50%{box-shadow:0 0 0 12px rgba(28,110,213,.12),0 0 30px 12px rgba(28,110,213,.75)}}
+@media (prefers-reduced-motion:no-preference){.pile.cue .pcard{animation:glow 1.4s ease-in-out infinite}}
+@media (prefers-reduced-motion:reduce){.c.ask{animation:none}}
 </style></head><body><main>
 <h1>TriTowers solver</h1><p class="sub">Rank-only. Percentages are estimates, never proofs.</p>
 <div id="msg" role="status" aria-live="polite"></div>
@@ -55,8 +70,10 @@ details{margin-top:8px;font-size:14px}textarea{width:100%;font:14px ui-monospace
 </section>
 
 <section id="play" hidden>
- <div class="info"><span class="pill">Waste <b id="wst">-</b></span><span class="pill">Tableau left <b id="rem">-</b></span><span class="pill">Stock left <b id="stk">-</b></span></div>
+ <div class="info"><span class="pill">Tableau left <b id="rem">-</b></span></div>
  <div class="tw"><div class="towers" id="board"></div></div>
+ <div class="piles"><button type="button" class="pile" id="stockPile"><span class="plbl">Stock left <b id="stk">-</b></span><span class="pcard back" id="stockTop" aria-hidden="true"></span><span class="cue-tag">Draw next</span></button>
+  <div class="pile"><span class="plbl">Waste (face up)</span><span class="pcard" id="wst">-</span></div></div>
  <div id="status"></div>
  <div id="adv" class="adv" hidden></div>
  <div class="row" style="margin-top:10px"><button class="b pri" id="recBtn" type="button">Suggest a move</button><button class="b" id="drawBtn" type="button">Draw from stock</button></div>
@@ -67,8 +84,10 @@ details{margin-top:8px;font-size:14px}textarea{width:100%;font:14px ui-monospace
 
 <section id="solved" hidden>
  <div id="solBanner" class="warn"></div>
- <div id="solBody" hidden><div class="info"><span class="pill">Step <b id="solN">0</b> of <b id="solT">0</b></span><span class="pill">Waste <b id="solW">-</b></span><span class="pill">Stock left <b id="solS">-</b></span></div>
+ <div id="solBody" hidden><div class="info"><span class="pill">Step <b id="solN">0</b> of <b id="solT">0</b></span></div>
   <div class="tw"><div class="towers" id="solBoard"></div></div>
+  <div class="piles"><button type="button" class="pile" id="solStockPile"><span class="plbl">Stock left <b id="solS">-</b></span><span class="pcard back" id="solStockTop" aria-hidden="true"></span><span class="cue-tag">Draw next</span></button>
+   <div class="pile"><span class="plbl">Waste (face up)</span><span class="pcard" id="solW">-</span></div></div>
   <div class="row"><button class="b" id="solPrev" type="button">Back</button><button class="b pri" id="solNext" type="button">Next step</button></div>
   <ol class="steps" id="solSteps"></ol></div>
  <button class="b" id="solEdit" type="button" style="width:100%;margin-top:8px">Back to the deal</button>
@@ -104,25 +123,38 @@ async function post(url,body,{timeout=75000,form=false,signal=null,retry=true}={
     await new Promise(r=>setTimeout(r,Math.min(1000*(i+1),4000)));
   }
 }
-function boardHTML(cells,mode){
+function boardHTML(cells,mode,recPos){
   return cells.map(c=>{
     let cls=c.kind,txt=c.card;
     if(mode==="edit"){cls=c.card==="?"?"back":c.card==="--"?"gone":"up";cls+=" edit";txt=c.card==="--"?"":(c.card==="?"?"":c.card)}
     if(mode==="edit"&&(photoReview.has(String(c.p))||(setup.deal&&c.card==="?"))){cls+=" review";if(c.card==="?")txt="?"}
     else{if(c.kind==="back"||c.kind==="gone")txt="";if(c.kind==="ask")txt="?"}
-    if(mode==="play"&&S&&S.advice&&S.advice.pos===c.p)cls+=" rec";
+    if(mode==="play"&&recPos===c.p)cls+=" rec";
     const label=mode==="edit"?`Position ${c.p}`:`Position ${c.p} ${c.card||""} ${c.kind}`;
     return `<button type="button" class="c ${cls}" data-p="${c.p}" aria-label="${escapeHTML(label)}" style="left:${c.x}%;top:${c.y}%">${mode==="edit"?`<small>${c.p}</small>`:""}${escapeHTML(txt)}</button>`}).join("");
 }
 function sized(el){el.parentElement.style.aspectRatio=aspect;el.style.aspectRatio=aspect}
+const cardName=r=>r==="*"?"Joker":r;
+// One stock/waste area for play-along and replay. The draw cue comes only from
+// an explicit next_action of type "draw"; can_draw is permission, not advice.
+function drawPiles([pile,top,count,waste],{wasteCard,stock,next,cue,clickable}){
+  $(count).textContent=stock;$(waste).textContent=wasteCard?cardName(wasteCard):"-";$(waste).classList.toggle("joker",wasteCard==="*");
+  const t=$(top);
+  if(!stock){t.className="pcard empty";t.textContent="Empty"}
+  else if(next){t.className="pcard"+(next==="*"?" joker":"");t.innerHTML=`<small>Next</small>${escapeHTML(cardName(next))}`}
+  else{t.className="pcard back"+(stock>1?" deep":"");t.textContent=""}
+  const p=$(pile);p.classList.toggle("cue",!!cue&&stock>0);p.disabled=!clickable;
+  p.setAttribute("aria-label",`Stock: ${stock} card${stock===1?"":"s"} left${next&&stock?", next card "+cardName(next):stock?", face down":""}${cue&&stock?". Draw next.":""}`)}
 function deckProblems(){const n={};const add=c=>{if(RANKS.includes(c))n[c]=(n[c]||0)+1};setup.board.forEach(add);add(setup.waste);if(setup.deal)setup.order.forEach(add);
   const bad=RANKS.filter(r=>n[r]>4).map(r=>r+" x"+n[r]);return bad.length?"Impossible deck: a deck has only four of each rank, but this board has "+bad.join(", ")+". Fix the board before starting.":""}
 function showDeck(){const w=$("deckWarn");if(!w)return "";const t=deckProblems();w.textContent=t;w.hidden=!t;return t}
 function drawEdit(){if(!geo)return;const cells=setup.board.map((card,i)=>({p:i+1,card,x:geo[i+1][0],y:geo[i+1][1],kind:""}));$("editBoard").innerHTML=boardHTML(cells,"edit");sized($("editBoard"));$("wasteBtn").textContent=setup.waste||"?";$("wasteBtn").classList.toggle("review",photoReview.has("waste")||(setup.deal&&!setup.waste));$("stV").textContent=setup.stock;showDeck()}
 function draw(){
   $("setup").hidden=true;$("play").hidden=false;
-  $("board").innerHTML=boardHTML(S.cells,"play");sized($("board"));
-  $("wst").textContent=S.waste;$("rem").textContent=S.remaining;$("stk").textContent=S.stock;
+  const na=S.next_action||{};
+  $("board").innerHTML=boardHTML(S.cells,"play",na.type==="play"?na.pos:null);sized($("board"));
+  $("rem").textContent=S.remaining;
+  drawPiles(["stockPile","stockTop","stk","wst"],{wasteCard:S.waste,stock:S.stock,next:S.stock_next,cue:na.type==="draw"&&S.can_draw,clickable:!busy&&S.can_draw});
   $("status").textContent=S.over?"Tableau cleared. You won!":(S.pending.length?"Tap each yellow ? and pick the card it is.":S.status);
   const a=S.advice;$("adv").hidden=!a;if(a)$("adv").textContent=a.text+(a.foresight?"\n"+a.foresight:"");
   $("recBtn").disabled=busy||S.over||S.pending.length>0;$("drawBtn").disabled=busy||!S.can_draw;$("undoBtn").disabled=busy||!S.can_undo;
@@ -132,12 +164,13 @@ function setBusy(b){busy=b;if(S)draw()}
 function keypad(title,extra,cb){
   $("sheetT").textContent=title;
   $("keys").innerHTML=[...RANKS,...extra].map(k=>`<button type="button" data-k="${k}">${k==="--"?"empty":k==="*"?"joker":k}</button>`).join("");
-  $("sheet").classList.add("open");
+  $("sheet").classList.add("open");sheetOpened=performance.now();
   $("keys").onclick=e=>{const k=e.target.dataset&&e.target.dataset.k;if(!k)return;$("sheet").classList.remove("open");cb(k)};
 }
 function closeSheet(){$("sheet").classList.remove("open");document.querySelectorAll(".c.sel").forEach(e=>e.classList.remove("sel"))}
 $("sheetX").onclick=closeSheet;
-$("sheet").onclick=e=>{if(e.target.id==="sheet")closeSheet()};
+// The second tap of a double tap that opened the keypad must not dismiss it.
+let sheetOpened=0;$("sheet").onclick=e=>{if(e.target.id==="sheet"&&performance.now()-sheetOpened>400)closeSheet()};
 let chain=Promise.resolve(),pendingN=0,gameGeneration=0;
 function act(op,extra,opts){const generation=gameGeneration,actionSid=sid;pendingN++;const run=chain.then(()=>generation===gameGeneration?doAct(op,extra,opts||{},actionSid,generation):null);chain=run.catch(()=>{}).then(()=>{pendingN--;if(pendingN===0){busy=false;if(S)draw()}});return chain}
 async function doAct(op,extra,{timeout},actionSid,generation){
@@ -160,7 +193,8 @@ let pollT=null,pollGen=0;function poll(){clearTimeout(pollT);const gen=++pollGen
     if(!busy){try{const r=await post("/api/act",{sid,op:"state"},{timeout:15000});if(gen===pollGen&&!busy&&r.ok&&r.advice){S=r;draw();return}}catch(e){}}
     pollT=setTimeout(tick,1500)};pollT=setTimeout(tick,1000)}
 $("recBtn").onclick=()=>act("recommend",{sims:1200},{timeout:70000});
-$("drawBtn").onclick=()=>{if(S&&S.joker&&S.stock===1){act("draw",{rank:"*"});return}keypad("Which card did you draw?",[],k=>act("draw",{rank:k}))};
+function startDraw(){if(!S||busy||pendingN>0||!S.can_draw)return;if(S.joker&&S.stock===1){act("draw",{rank:"*"});return}keypad("Which card did you draw?",[],k=>act("draw",{rank:k}))}
+$("drawBtn").onclick=startDraw;$("stockPile").onclick=startDraw;
 $("undoBtn").onclick=()=>act("undo",{});
 $("newBtn").onclick=()=>{if(confirm("Start a new game? The current game will be lost.")){editedPhoto();gameGeneration++;pollGen++;clearTimeout(pollT);busy=false;sessionStorage.removeItem("tt_sid");sid=null;S=null;photoDraft=false;photoMode=null;$("startBtn").textContent="Start game";$("play").hidden=true;$("setup").hidden=false;msg("");drawEdit()}};
 $("editBoard").onclick=e=>{const b=e.target.closest(".c");if(!b)return;const p=+b.dataset.p;keypad("Set position "+p,["?","--"],k=>{editedPhoto(p);setup.board[p-1]=k;drawEdit()})};
@@ -222,12 +256,16 @@ $("soChips").onclick=e=>{const b=e.target.closest(".chip");if(!b)return;const i=
 $("soClear").onclick=()=>{editedPhoto();setup.order=[];photoReview=new Set([...photoReview].filter(k=>!k.startsWith("stock-")));drawStock()};
 function addMany(){keypad("Next stock card ("+setup.order.length+" so far). Use * for the joker: it is always the last stock card.",["*"],k=>{editedPhoto();setup.order.push(k);drawStock();if(k!=="*"&&setup.order.length<24)setTimeout(addMany,0)})}
 $("soAdd").onclick=addMany;
-function showStep(){const f=SOL.frames[step];$("solN").textContent=step;$("solT").textContent=SOL.steps.length;$("solW").textContent=f.waste;$("solS").textContent=f.stock;
-  $("solBoard").innerHTML=boardHTML(f.cells,"play");if(f.next)$("solBoard").querySelector(`[data-p="${f.next}"]`).classList.add("rec");
+function nextOf(f){return f.next_action||(f.next?{type:"play",pos:f.next}:{type:"none"})}
+function showStep(){const f=SOL.frames[step],na=nextOf(f),drawNext=na.type==="draw"&&step<SOL.steps.length;$("solN").textContent=step;$("solT").textContent=SOL.steps.length;
+  drawPiles(["solStockPile","solStockTop","solS","solW"],{wasteCard:f.waste,stock:f.stock,next:f.stock_next,cue:drawNext,clickable:drawNext});
+  $("solBoard").innerHTML=boardHTML(f.cells,"play",na.type==="play"?na.pos:null);
   $("solBoard").parentElement.style.aspectRatio=aspect;$("solBoard").style.aspectRatio=aspect;
   $("solSteps").innerHTML=SOL.steps.map((t,i)=>`<li class="${i===step?"cur":""}" value="${i+1}">${escapeHTML(t)}</li>`).join("");
   $("solPrev").disabled=step===0;$("solNext").disabled=step>=SOL.steps.length;$("solNext").textContent=step>=SOL.steps.length-1?(step>=SOL.steps.length?"Done":"Last step"):"Next step"}
 $("solPrev").onclick=()=>{if(step>0){step--;showStep()}};$("solNext").onclick=()=>{if(step<SOL.steps.length){step++;showStep()}};
+// The stock advances the replay only when the next step is that draw.
+$("solStockPile").onclick=()=>{if(SOL&&step<SOL.steps.length&&nextOf(SOL.frames[step]).type==="draw"){step++;showStep()}};
 $("solEdit").onclick=()=>{$("solved").hidden=true;$("setup").hidden=false;msg("")};
 function incompleteDeal(){
   const missing=[];const board=setup.board.flatMap((rank,i)=>rank==="?"?[i+1]:[]);const stock=setup.order.flatMap((rank,i)=>rank==="?"?[i+1]:[]);
